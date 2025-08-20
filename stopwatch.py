@@ -61,4 +61,60 @@ def render(current_s: float, last_lap_s: float | None):
 # --- Non-blocking keyboard (works with any USB keyboard/foot pedal) ---
 TRIGGER_KEYS = {b' ', b'\n', b'\r'}  # SPACE or Enter
 CLEAR_KEYS   = {b'c', b'C'}
-QUIT_KEYS    = {b'q', b
+QUIT_KEYS    = {b'q', b'Q'}
+
+class RawStdin:
+    def __enter__(self):
+        self.fd = sys.stdin.fileno()
+        self.old = termios.tcgetattr(self.fd)
+        tty.setcbreak(self.fd)  # characters arrive immediately
+        return self
+    def __exit__(self, exc_type, exc, tb):
+        termios.tcsetattr(self.fd, termios.TCSADRAIN, self.old)
+
+def read_key(timeout=0.0):
+    if sys.stdin in select.select([sys.stdin], [], [], timeout)[0]:
+        return sys.stdin.buffer.read(1)
+    return None
+
+# --- Main loop ---
+running = True
+def handle_sigint(signum, frame):
+    global running
+    running = False
+signal.signal(signal.SIGINT, handle_sigint)
+
+start = time.monotonic()
+last_lap = None
+last_draw = 0.0
+
+render(0.0, last_lap)
+
+try:
+    with RawStdin():
+        while running:
+            now = time.monotonic()
+            elapsed = now - start
+
+            # Key handling
+            ch = read_key(0.01)
+            if ch:
+                if ch in QUIT_KEYS:
+                    break
+                if ch in TRIGGER_KEYS:
+                    last_lap = elapsed
+                    start = time.monotonic()  # reset stopwatch
+                    render(0.0, last_lap)
+                    continue
+                if ch in CLEAR_KEYS:
+                    last_lap = None
+                    render(elapsed, last_lap)
+                    continue
+
+            # Refresh ~10 fps
+            if now - last_draw >= 0.1:
+                render(elapsed, last_lap)
+                last_draw = now
+finally:
+    # Clear screen on exit
+    disp.display(Image.new("RGB", (W, H), (0, 0, 0)))
